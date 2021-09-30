@@ -130,8 +130,8 @@ class S3SinkTask extends SinkTask with ErrorHandler {
 
         logger.debug(s"[$sinkName] put records=${records.size()} stats=$recordsStats")
 
-        // a failure in catchUp will prevent the processing of further records
-        writerManager.catchUp().toThrowable(sinkName)
+        // a failure in retryPending will prevent the processing of further records
+        writerManager.retryPending().toThrowable(sinkName)
 
         records.asScala.foreach {
           record =>
@@ -159,7 +159,7 @@ class S3SinkTask extends SinkTask with ErrorHandler {
         }
 
         if (records.isEmpty) {
-          val commitResult = writerManager.enqueueCommitAllWritersIfFlushRequired()
+          val commitResult = writerManager.commitAllWritersIfFlushRequired()
           commitResult match {
             case Left(commitException: BatchCommitException) =>
               logger.error(s"[$sinkName] BatchCommitException encountered (non-recoverable), ${commitException.getMessage}")
@@ -169,8 +169,6 @@ class S3SinkTask extends SinkTask with ErrorHandler {
             case Right(_) =>
           }
         }
-
-        writerManager.catchUp().toThrowable(sinkName)
       }
     }
 

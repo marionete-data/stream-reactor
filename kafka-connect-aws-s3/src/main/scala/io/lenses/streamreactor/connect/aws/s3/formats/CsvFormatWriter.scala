@@ -28,7 +28,7 @@ import org.apache.kafka.connect.data.Schema
 
 import java.io.OutputStreamWriter
 import scala.collection.JavaConverters._
-import scala.util.Try
+import scala.util.{Success, Try}
 
 class CsvFormatWriter(outputStreamFn: () => S3OutputStream, writeHeaders: Boolean) extends S3FormatWriter with LazyLogging {
 
@@ -54,15 +54,16 @@ class CsvFormatWriter(outputStreamFn: () => S3OutputStream, writeHeaders: Boolea
 
   override def rolloverFileOnSchemaChange(): Boolean = true
 
-  override def close(newName: RemoteS3PathLocation, offset: Offset, updateOffsetFn: () => Unit) = {
-    Try(outputStream.complete(newName, offset))
-
-    Try(csvWriter.flush())
-    Try(outputStream.flush())
-    Try(csvWriter.close())
-    Try(outputStreamWriter.close())
-    Try(outputStream.close())
-  }
+  override def close(newName: RemoteS3PathLocation, offset: Offset): Either[Throwable, Unit] = {
+    for {
+      closed <- Try(outputStream.complete(newName, offset))
+      _ <- Suppress(csvWriter.flush())
+      _ <- Suppress(outputStream.flush())
+      _ <- Suppress(csvWriter.close())
+      _ <- Suppress(outputStreamWriter.close())
+      _ <- Suppress(outputStream.close())
+    } yield closed
+  }.toEither
 
   override def getPointer: Long = outputStream.getPointer
 

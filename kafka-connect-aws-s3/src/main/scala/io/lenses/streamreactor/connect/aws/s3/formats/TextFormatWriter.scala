@@ -52,12 +52,13 @@ class TextFormatWriter(outputStreamFn: () => S3OutputStream) extends S3FormatWri
 
   override def rolloverFileOnSchemaChange(): Boolean = false
 
-  override def close(newName: RemoteS3PathLocation, offset: Offset, updateOffsetFn: () => Unit): Unit = {
-    Try(outputStream.complete(newName, offset))
-
-    Try(outputStream.flush())
-    Try(outputStream.close())
-  }
+  override def close(newName: RemoteS3PathLocation, offset: Offset): Either[Throwable, Unit] = {
+    for {
+      closed <- Try(outputStream.complete(newName, offset))
+      _ <- Suppress(outputStream.flush())
+      _ <- Suppress(outputStream.close())
+    } yield closed
+  }.toEither
 
   override def getPointer: Long = outputStream.getPointer
 

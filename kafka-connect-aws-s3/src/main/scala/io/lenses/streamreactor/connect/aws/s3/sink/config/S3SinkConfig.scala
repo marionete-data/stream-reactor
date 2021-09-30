@@ -24,7 +24,7 @@ import io.lenses.streamreactor.connect.aws.s3.config.Format.Json
 import io.lenses.streamreactor.connect.aws.s3.config.S3FlushSettings.{defaultFlushCount, defaultFlushInterval, defaultFlushSize}
 import io.lenses.streamreactor.connect.aws.s3.config.{FormatSelection, S3Config, S3ConfigDefBuilder}
 import io.lenses.streamreactor.connect.aws.s3.model.location.RemoteS3RootLocation
-import io.lenses.streamreactor.connect.aws.s3.model.{PartitionSelection, S3OutputStreamOptions, StreamedWriteOutputStreamOptions}
+import io.lenses.streamreactor.connect.aws.s3.model.{OutputStreamOptions, PartitionSelection}
 import io.lenses.streamreactor.connect.aws.s3.sink._
 
 object S3SinkConfig {
@@ -61,7 +61,7 @@ object SinkBucketOptions extends LazyLogging {
         case None => new HierarchicalS3FileNamingStrategy(formatSelection)
       }
 
-      val s3WriteOptions = config.s3WriteOptions(config)
+      val s3WriteOptions = OutputStreamOptions(config)
       s3WriteOptions match {
         case Right(value) => SinkBucketOptions(
           kcql.getSource,
@@ -87,5 +87,5 @@ case class SinkBucketOptions(
                               fileNamingStrategy: S3FileNamingStrategy,
                               partitionSelection: Option[PartitionSelection] = None,
                               commitPolicy: CommitPolicy = DefaultCommitPolicy(Some(defaultFlushSize), Some(defaultFlushInterval), Some(defaultFlushCount)),
-                              writeMode: S3OutputStreamOptions = StreamedWriteOutputStreamOptions(),
+                              writeMode: OutputStreamOptions,
                             )

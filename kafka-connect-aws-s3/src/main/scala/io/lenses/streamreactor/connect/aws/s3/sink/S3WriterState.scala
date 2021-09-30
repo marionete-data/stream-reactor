@@ -42,7 +42,8 @@ case class S3WriterState(topicPartition: TopicPartition,
                          recordCount: Long = 0,
                          lastKnownFileSize: Long = 0,
                          lastKnownSchema: Option[Schema] = None,
-                         formatWriter: Option[S3FormatWriter]
+                         formatWriter: Option[S3FormatWriter],
+                         pendingUpload: Boolean = false,
                         ) {
 
   def show(): String = {
@@ -54,7 +55,8 @@ case class S3WriterState(topicPartition: TopicPartition,
       lastKnownFileSize = 0L,
       recordCount = 0L,
       formatWriter = None,
-      lastFlushedQueuedTimestamp = Some(System.currentTimeMillis())
+      lastFlushedQueuedTimestamp = Some(System.currentTimeMillis()),
+      pendingUpload = false,
     )
   }
 

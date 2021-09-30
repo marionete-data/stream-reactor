@@ -19,6 +19,7 @@ package io.lenses.streamreactor.connect.aws.s3.sink.utils
 import com.typesafe.scalalogging.LazyLogging
 import io.lenses.streamreactor.connect.aws.s3.auth.AuthResources
 import io.lenses.streamreactor.connect.aws.s3.config.{AuthMode, S3Config}
+import io.lenses.streamreactor.connect.aws.s3.model.location.{LocalPathLocation, LocalRootLocation}
 import io.lenses.streamreactor.connect.aws.s3.sink.ThrowableEither._
 import io.lenses.streamreactor.connect.aws.s3.sink.utils.S3ProxyContext.TestBucket
 import io.lenses.streamreactor.connect.aws.s3.storage.{JCloudsStorageInterface, StorageInterface}
@@ -28,11 +29,17 @@ import org.scalatest.matchers.should.Matchers
 import software.amazon.awssdk.services.s3.S3Client
 import software.amazon.awssdk.services.s3.model.{CreateBucketRequest, Delete, DeleteObjectsRequest, ObjectIdentifier}
 
+import java.io.File
+import java.nio.file.attribute.FileAttribute
+import java.nio.file.{Files, Path}
 import scala.util.Try
 
 
 
 trait S3TestConfig extends AnyFlatSpec with BeforeAndAfter with BeforeAndAfterAll with Matchers with LazyLogging {
+
+  var localRoot: LocalRootLocation = _
+  var localPath : LocalPathLocation = _
 
   def cleanUpEnabled : Boolean = true
 
@@ -66,6 +73,9 @@ trait S3TestConfig extends AnyFlatSpec with BeforeAndAfter with BeforeAndAfterAl
       clearTestBucket()
       setUpTestData()
     }
+
+    localRoot = LocalRootLocation(Files.createTempDirectory("blah").toAbsolutePath.toString)
+    localPath = LocalPathLocation(Files.createTempFile("blah", "blah").toAbsolutePath.toString, createFile = false)
   }
 
   override protected def beforeAll(): Unit = {

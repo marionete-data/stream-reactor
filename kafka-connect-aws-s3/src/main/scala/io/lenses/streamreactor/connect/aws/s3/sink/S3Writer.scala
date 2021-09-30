@@ -22,7 +22,6 @@ import com.typesafe.scalalogging.LazyLogging
 import io.lenses.streamreactor.connect.aws.s3.formats.S3FormatWriter
 import io.lenses.streamreactor.connect.aws.s3.model._
 import io.lenses.streamreactor.connect.aws.s3.model.location.RemoteS3RootLocation
-import io.lenses.streamreactor.connect.aws.s3.processing.BlockingQueueProcessor
 import io.lenses.streamreactor.connect.aws.s3.storage.StorageInterface
 import org.apache.kafka.connect.data.Schema
 
@@ -35,7 +34,6 @@ class S3Writer(sinkName: String,
                formatWriterFn: (TopicPartitionOffset, Map[PartitionField, String], Offset => () => Unit) => Either[ProcessorException, S3FormatWriter],
                fileNamingStrategy: S3FileNamingStrategy,
                partitionValues: Map[PartitionField, String],
-               processor: BlockingQueueProcessor
               )(implicit storageInterface: StorageInterface) extends LazyLogging {
 
   private var internalState: Option[S3WriterState] = None
@@ -64,7 +62,7 @@ class S3Writer(sinkName: String,
     }
   }
 
-  def enqueueWrite(messageDetail: MessageDetail, tpo: TopicPartitionOffset): Either[ProcessorException, Unit] = {
+  def write(messageDetail: MessageDetail, tpo: TopicPartitionOffset): Either[ProcessorException, Unit] = {
 
     createFormatWriterIfEmpty(internalState, tpo, partitionValues) match {
       case Left(exception) => return exception.asLeft
@@ -80,7 +78,10 @@ class S3Writer(sinkName: String,
         is.getFormatWriter match {
           case Left(error) => return error.asLeft
           case Right(formatWriter: S3FormatWriter) =>
-            formatWriter.write(messageDetail.keySinkData, messageDetail.valueSinkData, tpo.topic).asRight
+            formatWriter.write(messageDetail.keySinkData, messageDetail.valueSinkData, tpo.topic) match {
+              case Left(value) => return ProcessorException(value).asLeft
+              case Right(_) =>
+            }
         }
     }
 
@@ -119,33 +120,30 @@ class S3Writer(sinkName: String,
     }
   }
 
-  def enqueueCommit: Either[CommitException, Unit] = {
+  def commit: Either[CommitException, Unit] = {
 
-    internalState.fold {
-      return CommitException("Invalid internal state").asLeft
-    } { is =>
-
-      val topicPartitionOffset = is.topicPartitionOffset
+      internalState = internalState.map(_.copy(pendingUpload = true))
 
       // it is ok for there not to be a formatWriter attached here.
-      for {
-        formatWriter <- is.formatWriter
-      } for {
+      val writeResult = for {
+        internalState <- Either.cond(internalState.nonEmpty, internalState.get, CommitException("Invalid internal state"))
         finalFileName <- fileNamingStrategy.finalFilename(
           bucketAndPrefix,
-          topicPartitionOffset,
+          internalState.topicPartitionOffset,
           partitionValues
         )
-      } yield {
-        formatWriter.close(finalFileName, is.offset,
-          updateCommittedOffsetFn(is.offset))
-      }
+        complete <- internalState
+          .formatWriter
+          .map(fw => fw.close(finalFileName, internalState.offset))
+          .getOrElse(().asRight)
+      } yield complete
 
-      resetState()
-
-      ().asRight
+    writeResult match {
+      case Left(ex: CommitException) => ex.asLeft
+      case Right(_) =>
+        resetState()
+        ().asRight
     }
-
   }
 
   private def resetState(): Unit = {
@@ -212,11 +210,8 @@ class S3Writer(sinkName: String,
 
   private def offset = internalState.map(_.offset)
 
-  /**
-    * Delegates to the processor's process method
-    *
-    * @return
-    */
-  def process(): Either[ProcessorException, Unit] = processor.process()
+  def hasPendingUpload() : Boolean = {
+    internalState.exists(_.pendingUpload)
+  }
 
 }

@@ -20,7 +20,6 @@ package io.lenses.streamreactor.connect.aws.s3.storage.stream
 import io.lenses.streamreactor.connect.aws.s3.formats.Using
 import io.lenses.streamreactor.connect.aws.s3.model.Offset
 import io.lenses.streamreactor.connect.aws.s3.model.location.{LocalPathLocation, RemoteS3PathLocation}
-import io.lenses.streamreactor.connect.aws.s3.processing.BlockingQueueProcessor
 import io.lenses.streamreactor.connect.aws.s3.storage.StorageInterface
 import org.mockito.MockitoSugar
 import org.scalatest.flatspec.AnyFlatSpec
@@ -92,7 +91,6 @@ class BuildLocalOutputStreamTest extends AnyFlatSpec with MockitoSugar with Matc
   class TestContext(cleanup: Boolean) {
 
     implicit val mockStorageInterface: StorageInterface = mock[StorageInterface]
-    implicit val queueProcessor: BlockingQueueProcessor = new BlockingQueueProcessor()
     doNothing.when(mockStorageInterface).uploadFile(testLocalLocation, testBucketAndPath)
 
     val target = new BuildLocalOutputStream(

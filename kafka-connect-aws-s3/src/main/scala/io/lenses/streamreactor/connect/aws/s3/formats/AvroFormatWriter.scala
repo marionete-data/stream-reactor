@@ -63,8 +63,8 @@ class AvroFormatWriter(outputStreamFn: () => S3OutputStream) extends S3FormatWri
     }
   }
 
-  override def close(newName: RemoteS3PathLocation, offset: Offset, updateOffsetFn: () => Unit): Unit = {
-    avroWriterState.fold(logger.debug("Requesting close (with args) when there's nothing to close"))(_.close(newName, offset))
+  override def close(newName: RemoteS3PathLocation, offset: Offset): Either[Throwable, Unit] = {
+    avroWriterState.fold{logger.debug("Requesting close (with args) when there's nothing to close");().asRight[Throwable]}(_.close(newName, offset))
   }
 
   override def close(): Unit = {
@@ -88,13 +88,13 @@ class AvroFormatWriter(outputStreamFn: () => S3OutputStream) extends S3FormatWri
 
     }
 
-
-    def close(newName: RemoteS3PathLocation, offset: Offset) = {
-      Try(fileWriter.flush())
-      Try(outputStream.complete(newName, offset))
-      Try(fileWriter.close())
-      Try(outputStream.close())
-    }
+    def close(newName: RemoteS3PathLocation, offset: Offset) : Either[Throwable, Unit] = {
+      for {
+        _ <- Suppress(fileWriter.flush())
+        closed <- Try(outputStream.complete(newName, offset))
+        _ <- Suppress(fileWriter.close())
+      } yield closed
+    }.toEither
 
     def pointer: Long = outputStream.getPointer
 

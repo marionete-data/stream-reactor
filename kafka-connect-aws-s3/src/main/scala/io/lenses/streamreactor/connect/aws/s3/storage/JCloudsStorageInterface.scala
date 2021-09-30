@@ -39,10 +39,12 @@ class JCloudsStorageInterface(sinkName: String, blobStoreContext: BlobStoreConte
     logger.debug(s"[{}] Uploading file from local {} to s3 {}", sinkName, initialName, finalDestination)
 
     val file = new File(initialName.path)
+    val length = file.length()
+    require(length > 0L, "zero byte upload detected")
     val blob = blobStore
       .blobBuilder(finalDestination.path)
       .payload(file)
-      .contentLength(file.length()) // TODO: Not sure if necessary
+      .contentLength(length)
       .build()
 
     blobStore.putBlob(finalDestination.bucket, blob)
@@ -51,75 +53,11 @@ class JCloudsStorageInterface(sinkName: String, blobStoreContext: BlobStoreConte
 
   }
 
-  override def initUpload(bucketAndPath: RemoteS3PathLocation): MultiPartUploadState = {
-    logger.debug(s"[{}] Initialising upload for bucketAndPath: {}", sinkName, bucketAndPath)
-    val s3PutOptions = PutOptions.Builder.multipart()
-
-    MultiPartUploadState(
-      upload = blobStore.initiateMultipartUpload(
-        bucketAndPath.bucket,
-        buildBlobMetadata(bucketAndPath),
-        s3PutOptions
-      ),
-      Vector()
-    )
-  }
-
   private def buildBlobMetadata(bucketAndPath: RemoteS3PathLocation): BlobMetadata = {
     val blobMetadata = new MutableBlobMetadataImpl()
     blobMetadata.setId(UUID.randomUUID().toString)
     blobMetadata.setName(bucketAndPath.path)
     blobMetadata
-  }
-
-  override def uploadPart(state: MultiPartUploadState, bytes: Array[Byte]): MultiPartUploadState = {
-    logger.debug(s"[{}] Uploading part #{} for {}/{}",
-      sinkName, state.parts.size, state.upload.containerName(), state.upload.blobName())
-
-    val byteArrayInputStream = new ByteArrayInputStream(bytes)
-
-    val payload = new InputStreamPayload(byteArrayInputStream)
-    val newPart = try {
-      val contentMetadata = new BaseMutableContentMetadata()
-      contentMetadata.setContentLength(bytes.length)
-      payload.setContentMetadata(contentMetadata)
-      blobStore.uploadMultipartPart(
-        state.upload,
-        state.parts.size + 1,
-        payload
-      )
-    } finally {
-      Try {
-        payload.close()
-      }
-      Try {
-        byteArrayInputStream.close()
-      }
-    }
-
-    state.copy(parts = state.parts :+ newPart)
-  }
-
-  override def completeUpload(state: MultiPartUploadState): Unit = {
-
-    logger.debug(s"[{}] Completing upload of {} with {} parts",
-      sinkName, state.upload.blobName(), state.parts.size)
-
-    blobStore.completeMultipartUpload(
-      state.upload,
-      state.parts.asJava
-    )
-  }
-
-  override def rename(originalFilename: RemoteS3PathLocation, newFilename: RemoteS3PathLocation): Unit = {
-    logger.info(s"[{}] Renaming upload from {} to {}", sinkName, originalFilename, newFilename)
-    if (originalFilename == newFilename) {
-      return
-    }
-
-    blobStore.copyBlob(originalFilename.bucket, originalFilename.path, newFilename.bucket, newFilename.path, CopyOptions.NONE)
-
-    blobStore.removeBlob(originalFilename.bucket, originalFilename.path)
   }
 
   override def close(): Unit = blobStoreContext.close()

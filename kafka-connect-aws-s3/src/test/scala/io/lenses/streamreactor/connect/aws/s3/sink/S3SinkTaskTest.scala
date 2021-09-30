@@ -58,7 +58,8 @@ class S3SinkTaskTest extends AnyFlatSpec with Matchers with S3TestConfig with Mo
     DEP_AWS_SECRET_KEY -> Credential,
     DEP_AUTH_MODE -> AuthMode.Credentials.toString,
     DEP_CUSTOM_ENDPOINT -> S3ProxyContext.Uri,
-    DEP_ENABLE_VIRTUAL_HOST_BUCKETS -> "true"
+    DEP_ENABLE_VIRTUAL_HOST_BUCKETS -> "true",
+    "name" -> "s3SinkTaskBuildLocalTest",
   )
 
   private val DefaultProps = Map(
@@ -66,7 +67,8 @@ class S3SinkTaskTest extends AnyFlatSpec with Matchers with S3TestConfig with Mo
     AWS_SECRET_KEY -> Credential,
     AUTH_MODE -> AuthMode.Credentials.toString,
     CUSTOM_ENDPOINT -> S3ProxyContext.Uri,
-    ENABLE_VIRTUAL_HOST_BUCKETS -> "true"
+    ENABLE_VIRTUAL_HOST_BUCKETS -> "true",
+    "name" -> "s3SinkTaskBuildLocalTest",
   )
 
   private val partitionedData: List[Struct] = List(
@@ -277,6 +279,7 @@ class S3SinkTaskTest extends AnyFlatSpec with Matchers with S3TestConfig with Mo
     checkRecord(genericRecords.head, "sam", "mr", 100.43)
 
   }
+
 
 
   "S3SinkTask" should "error when trying to write AVRO to text format" in {
@@ -1434,7 +1437,6 @@ class S3SinkTaskTest extends AnyFlatSpec with Matchers with S3TestConfig with Mo
     val props = DefaultProps
       .combine(
         Map(
-          "name" -> "s3SinkTaskBuildLocalTest",
           "connect.s3.kcql" -> s"insert into $BucketName:$PrefixName select * from $TopicName WITH_FLUSH_COUNT = 1",
           "connect.s3.write.mode" -> "BuildLocal",
         )
@@ -1499,6 +1501,7 @@ class S3SinkTaskTest extends AnyFlatSpec with Matchers with S3TestConfig with Mo
     val task = new S3SinkTask()
 
     val props = Map(
+      "name" -> "sinkName",
       PROFILES -> s"$profileDir/inttest1.yaml,$profileDir/inttest2.yaml"
     ).asJava
 

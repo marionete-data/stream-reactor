@@ -41,7 +41,7 @@ class S3ParquetWriterManagerTest extends AnyFlatSpec with Matchers with S3TestCo
   private val parquetFormatReader = new ParquetFormatReader
 
   private val bucketAndPrefix = RemoteS3RootLocation(BucketName, Some(PathPrefix), false)
-  private val parquetConfig = S3SinkConfig(S3Config(
+  private def parquetConfig = S3SinkConfig(S3Config(
     None,
     Some(Identity),
     Some(Credential),
@@ -52,7 +52,8 @@ class S3ParquetWriterManagerTest extends AnyFlatSpec with Matchers with S3TestCo
         bucketAndPrefix,
         commitPolicy = DefaultCommitPolicy(None, None, Some(2)),
         fileNamingStrategy = new HierarchicalS3FileNamingStrategy(FormatSelection(Parquet)),
-        formatSelection = FormatSelection(Parquet)
+        formatSelection = FormatSelection(Parquet),
+        writeMode = OutputStreamOptions(localRoot)
       )
     )
   )

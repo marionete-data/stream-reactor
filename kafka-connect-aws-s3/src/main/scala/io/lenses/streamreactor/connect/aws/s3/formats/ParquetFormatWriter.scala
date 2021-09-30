@@ -29,7 +29,7 @@ import org.apache.parquet.avro.AvroParquetWriter
 import org.apache.parquet.hadoop.ParquetWriter
 import org.apache.parquet.hadoop.ParquetWriter.{DEFAULT_BLOCK_SIZE, DEFAULT_PAGE_SIZE}
 
-import scala.util.Try
+import scala.util.{Success, Try}
 
 class ParquetFormatWriter(outputStreamFn: () => S3OutputStream) extends S3FormatWriter with LazyLogging {
 
@@ -50,7 +50,7 @@ class ParquetFormatWriter(outputStreamFn: () => S3OutputStream) extends S3Format
 
       writer.write(genericRecord)
       outputStream.flush()
-    } toEither
+    }.toEither
   }
 
   private def init(connectSchema: Option[ConnectSchema]): ParquetWriter[AnyRef] = {
@@ -70,12 +70,14 @@ class ParquetFormatWriter(outputStreamFn: () => S3OutputStream) extends S3Format
 
   override def rolloverFileOnSchemaChange() = true
 
-  override def close(newName: RemoteS3PathLocation, offset: Offset, updateOffsetFn: () => Unit) = {
-    Try(writer.close())
-    Try(outputStream.flush())
-    Try(outputStream.complete(newName, offset))
-    Try(outputStream.close())
-  }
+  override def close(newName: RemoteS3PathLocation, offset: Offset): Either[Throwable, Unit] = {
+    for {
+      _ <- Suppress(writer.close())
+      _ <- Suppress(outputStream.flush())
+      closed <- Try(outputStream.complete(newName, offset))
+      _ <- Suppress(outputStream.close())
+    } yield closed
+  }.toEither
 
   override def getPointer: Long = outputStream.getPointer
 

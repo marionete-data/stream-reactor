@@ -59,7 +59,7 @@ trait S3FormatWriter extends AutoCloseable {
 
   def getPointer: Long
 
-  def close(newName: RemoteS3PathLocation, offset: Offset, updateOffsetFn: () => Unit = () => ())
+  def close(newName: RemoteS3PathLocation, offset: Offset): Either[Throwable, Unit]
 
 }
 

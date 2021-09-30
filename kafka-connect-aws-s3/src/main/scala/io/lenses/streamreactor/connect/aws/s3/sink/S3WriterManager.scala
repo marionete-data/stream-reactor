@@ -17,18 +17,18 @@
 
 package io.lenses.streamreactor.connect.aws.s3.sink
 
-import cats.implicits.catsSyntaxEitherId
+import cats.implicits._
 import com.typesafe.scalalogging.{LazyLogging, StrictLogging}
 import io.lenses.streamreactor.connect.aws.s3.formats.S3FormatWriter
 import io.lenses.streamreactor.connect.aws.s3.model.Offset.orderingByOffsetValue
 import io.lenses.streamreactor.connect.aws.s3.model._
 import io.lenses.streamreactor.connect.aws.s3.model.location.{RemoteS3PathLocation, RemoteS3RootLocation}
-import io.lenses.streamreactor.connect.aws.s3.processing.{BlockingQueueProcessor, ProcessorManager}
 import io.lenses.streamreactor.connect.aws.s3.sink.config.{S3SinkConfig, SinkBucketOptions}
 import io.lenses.streamreactor.connect.aws.s3.storage.StorageInterface
 import org.apache.kafka.clients.consumer.OffsetAndMetadata
 import org.apache.kafka.connect.data.Schema
 
+import scala.collection.compat.toTraversableLikeExtensionMethods
 import scala.collection.mutable
 import scala.util.Try
 
@@ -49,41 +49,69 @@ class S3WriterManager(sinkName: String,
                       bucketAndPrefixFn: Topic => Either[ProcessorException, RemoteS3RootLocation],
                       fileNamingStrategyFn: Topic => Either[ProcessorException, S3FileNamingStrategy],
                      )
-                     (implicit storageInterface: StorageInterface,
-                      processorManager: ProcessorManager
+                     (
+                       implicit storageInterface: StorageInterface
                      ) extends StrictLogging {
-
 
   private val initialOpenOffsets = mutable.Map.empty[TopicPartition, Offset]
 
   private val writers = mutable.Map.empty[MapKey, S3Writer]
 
-  def enqueueCommitAllWritersIfFlushRequired(): Either[BatchCommitException, Unit] = {
+  def retryPending() : Either[Throwable,Unit] = {
+    writers
+      .values
+      .filter(_.hasPendingUpload())
+      .foreach(writer => writer.commit match {
+        case Left(value) => return value.asLeft
+        case Right(_) =>
+      })
+    ().asRight
+  }
+
+
+  private def writerForTopicPartitionWithMaxOffset(topicPartition: TopicPartition) = {
+    writers
+      .collect {
+        case (key, writer) if key.topicPartition == topicPartition && writer.getCommittedOffset.nonEmpty => writer
+      }
+      .maxBy(_.getCommittedOffset)
+  }
+
+  def commitAllWritersIfFlushRequired(): Either[BatchCommitException, Unit] = {
     if (writers.values.exists(_.shouldFlush)) {
-      enqueueCommitAllWriters()
+      commitAllWriters()
     } else {
       ().asRight
     }
   }
 
-  private def enqueueCommitAllWriters(): Either[BatchCommitException, Unit] = {
+  private def commitAllWriters(): Either[BatchCommitException, Unit] = {
     logger.debug(s"[{}] Received call to S3WriterManager.commit", sinkName)
-    enqueueCommitWriters(_ => true)
+    commitWriters(_ => true)
   }
 
-  private def enqueueCommitTopicPartitionWriters(topicPartition: TopicPartition): Either[BatchCommitException, Unit] = {
-    enqueueCommitWriters(mapKey => mapKey.topicPartition == topicPartition)
+  private def commitWriters(writer: S3Writer, topicPartition: TopicPartition): Either[BatchCommitException, Unit] = {
+    if (writer.shouldFlush) {
+      commitWriters(mapKey => mapKey.topicPartition == topicPartition)
+    } else {
+      ().asRight
+    }
   }
 
-  private def enqueueCommitWriters(keyFilterFn: MapKey => Boolean): Either[BatchCommitException, Unit] = {
+  private def commitTopicPartitionWriters(topicPartition: TopicPartition): Either[BatchCommitException, Unit] = {
+    commitWriters(mapKey => mapKey.topicPartition == topicPartition)
+  }
+
+  private def commitWriters(keyFilterFn: MapKey => Boolean): Either[BatchCommitException, Unit] = {
 
     logger.debug(s"[{}] Received call to S3WriterManager.commit", sinkName)
     val errorsSet = writers
       .filterKeys(keyFilterFn)
-      .mapValues(_.enqueueCommit)
+      .mapValues(_.commit)
       .collect {
         case (key: MapKey, Left(exception: Exception)) => (key, exception)
-      }.toMap
+      }
+      .toMap
 
     if (errorsSet.nonEmpty) BatchCommitException(errorsSet).asLeft else ().asRight
   }
@@ -91,38 +119,31 @@ class S3WriterManager(sinkName: String,
   def open(partitions: Set[TopicPartition]): Either[ProcessorException, Map[TopicPartition, Offset]] = {
     logger.debug(s"[{}] Received call to S3WriterManager.open", sinkName)
 
-    val (errors, offsets) = partitions.collect {
-      case topicPartition: TopicPartition =>
-        for {
-          fileNamingStrategy <- fileNamingStrategyFn(topicPartition.topic)
-          bucketAndPrefix <- bucketAndPrefixFn(topicPartition.topic)
-          topicPartitionPrefix <- Try(fileNamingStrategy.topicPartitionPrefix(bucketAndPrefix, topicPartition)).toEither
-        } yield {
-          new OffsetSeeker(fileNamingStrategy)
-            .seek(topicPartitionPrefix)
-            .find(_.toTopicPartition == topicPartition)
-        }
-    }.partition(_.isLeft)
-
-    if (errors.nonEmpty) {
-      ProcessorException(
-        errors.collect {
-          case Left(exception: Exception) => exception
-        }
-      ).asLeft
-    } else {
-
-      offsets
-        .collect {
-          case Right(Some(offset)) => offset.toTopicPartitionOffsetTuple
-        }
-        .map {
-          case (tp, o) => initialOpenOffsets.put(tp, o)
-            (tp, o)
-        }
-        .toMap
-        .asRight
+    partitions
+      .map(seekOffsetsForTopicPartition)
+      .partitionMap(identity)
+      match {
+        case (throwables, _) if throwables.nonEmpty => ProcessorException(throwables).asLeft
+        case (_, offsets) =>
+          offsets.flatten.map(
+            tpo => {
+              initialOpenOffsets.put(tpo.toTopicPartition, tpo.offset)
+              tpo.toTopicPartitionOffsetTuple
+            }
+          ).toMap.asRight
     }
+  }
+
+  private def seekOffsetsForTopicPartition(topicPartition: TopicPartition): Either[Throwable, Option[TopicPartitionOffset]] = {
+      for {
+        fileNamingStrategy <- fileNamingStrategyFn(topicPartition.topic)
+        bucketAndPrefix <- bucketAndPrefixFn(topicPartition.topic)
+        topicPartitionPrefix <- Try(fileNamingStrategy.topicPartitionPrefix(bucketAndPrefix, topicPartition)).toEither
+      } yield {
+        new OffsetSeeker(fileNamingStrategy)
+          .seek(topicPartitionPrefix)
+          .find(_.toTopicPartition == topicPartition)
+      }
   }
 
   def close(): Unit = {
@@ -130,44 +151,23 @@ class S3WriterManager(sinkName: String,
     writers.values.foreach(_.close())
   }
 
-  def catchUp(): Either[ProcessorException, Unit] = processorManager.catchUp()
-
   def write(topicPartitionOffset: TopicPartitionOffset, messageDetail: MessageDetail): Either[SinkException, Unit] = {
 
     logger.debug(s"[$sinkName] Received call to S3WriterManager.write for ${topicPartitionOffset.topic}-${topicPartitionOffset.partition}:${topicPartitionOffset.offset}")
 
-    writer(topicPartitionOffset.toTopicPartition, messageDetail) match {
-      case Left(throwable) => throwable.asLeft
-      case Right(writer) =>
-        if (writer.shouldSkip(topicPartitionOffset.offset)) {
-          ().asRight
-        } else {
-
+    for {
+      writer <- writer(topicPartitionOffset.toTopicPartition, messageDetail)
+      shouldSkip = writer.shouldSkip(topicPartitionOffset.offset)
+      resultIfNotSkipped <- if (!shouldSkip) {
+        for {
           // commitException can not be recovered from
-          rollOverTopicPartitionWriters(writer, topicPartitionOffset.toTopicPartition, messageDetail) match {
-            case Left(exception) => return exception.asLeft
-            case Right(_) =>
-          }
-
+          _ <- rollOverTopicPartitionWriters(writer, topicPartitionOffset.toTopicPartition, messageDetail)
           // a processErr can potentially be recovered from in the next iteration.  Can be due to network problems, for
-          // example
-          val processErr = for {
-            _ <- writer.enqueueWrite(messageDetail, topicPartitionOffset)
-            procRes <- writer.process()
-          } yield procRes
-
-          if (writer.shouldFlush) {
-            // a commitErr cannot be recovered from in the next iteration and we must revert back to the lastCommittedOffset
-            enqueueCommitTopicPartitionWriters(topicPartitionOffset.toTopicPartition) match {
-              case Left(batchCommitException: BatchCommitException) => return batchCommitException.asLeft
-              case Right(_) =>
-            }
-          }
-
-          processErr
-        }
-    }
-
+          _ <- writer.write(messageDetail, topicPartitionOffset)
+          commitRes <- commitWriters(writer, topicPartitionOffset.toTopicPartition)
+        } yield commitRes
+      } else {().asRight}
+    } yield resultIfNotSkipped
 
   }
 
@@ -177,13 +177,8 @@ class S3WriterManager(sinkName: String,
                                              messageDetail: MessageDetail
                                            ): Either[BatchCommitException, Unit] = {
     messageDetail.valueSinkData.schema() match {
-      case Some(value: Schema) if s3Writer.shouldRollover(value) =>
-        enqueueCommitTopicPartitionWriters(topicPartition) match {
-          case Left(err) => err.asLeft
-          case Right(_) => ().asRight
-        }
-      case _ =>
-        ().asRight
+      case Some(value: Schema) if s3Writer.shouldRollover(value) => commitTopicPartitionWriters(topicPartition)
+      case _ => ().asRight
     }
   }
 
@@ -209,16 +204,15 @@ class S3WriterManager(sinkName: String,
       fileNamingStrategy <- fileNamingStrategyFn(topicPartition.topic)
       partitionValues <- processPartitionValues(messageDetail, fileNamingStrategy, topicPartition)
       stagingFilename <- fileNamingStrategy.stagingFilename(bucketAndPrefix, topicPartition, partitionValues)
-      processor = processorManager.processor(topicPartition, stagingFilename)
     } yield writers.getOrElseUpdate(
-      MapKey(topicPartition, stagingFilename), createWriter(bucketAndPrefix, topicPartition, partitionValues, processor) match {
+      MapKey(topicPartition, stagingFilename), createWriter(bucketAndPrefix, topicPartition, partitionValues) match {
         case Left(ex) => return ex.asLeft[S3Writer]
         case Right(value) => value
       }
     )
   }
 
-  private def createWriter(bucketAndPrefix: RemoteS3RootLocation, topicPartition: TopicPartition, partitionValues: Map[PartitionField, String], processor: BlockingQueueProcessor): Either[ProcessorException, S3Writer] = {
+  private def createWriter(bucketAndPrefix: RemoteS3RootLocation, topicPartition: TopicPartition, partitionValues: Map[PartitionField, String]): Either[ProcessorException, S3Writer] = {
     logger.debug(s"[$sinkName] Creating new writer for bucketAndPrefix:$bucketAndPrefix")
     for {
       commitPolicy <- commitPolicyFn(topicPartition.topic)
@@ -230,8 +224,7 @@ class S3WriterManager(sinkName: String,
         commitPolicy,
         formatWriterFn,
         fileNamingStrategy,
-        partitionValues,
-        processor
+        partitionValues
       )
     }
   }
@@ -240,22 +233,8 @@ class S3WriterManager(sinkName: String,
     currentOffsets
       .collect {
         case (topicPartition, offsetAndMetadata) =>
-          val candidateWriters = writers
-            .filter {
-              case (key, writer) => key.topicPartition == topicPartition && writer.getCommittedOffset.nonEmpty
-            }
-            .values
-          if (candidateWriters.isEmpty) {
-            None
-          } else {
-            Some(
-              topicPartition,
-              createOffsetAndMetadata(offsetAndMetadata, candidateWriters
-                .maxBy(_.getCommittedOffset))
-            )
-          }
-
-      }.flatten.toMap
+          (topicPartition, createOffsetAndMetadata(offsetAndMetadata, writerForTopicPartitionWithMaxOffset(topicPartition)))
+      }
   }
 
   private def createOffsetAndMetadata(offsetAndMetadata: OffsetAndMetadata, writer: S3Writer) = {
@@ -271,11 +250,7 @@ class S3WriterManager(sinkName: String,
       .filterKeys(mapKey => mapKey
         .topicPartition == topicPartition)
       .keys
-      .foreach({
-        writers.remove
-      })
-
-    processorManager.cleanUp(topicPartition: TopicPartition)
+      .foreach(writers.remove)
   }
 
   def getLastCommittedOffset(topicPartition: TopicPartition): Offset = {
@@ -296,8 +271,6 @@ object S3WriterManager extends LazyLogging {
   def from(config: S3SinkConfig, sinkName: String)
           (implicit storageInterface: StorageInterface): S3WriterManager = {
 
-    implicit val processorMan: ProcessorManager = new ProcessorManager()
-
     val bucketAndPrefixFn: Topic => Either[ProcessorException, RemoteS3RootLocation] = topic => {
       bucketOptsForTopic(config, topic)
         .fold(ProcessorException(s"No bucket config for $topic").asLeft[RemoteS3RootLocation])(_.bucketAndPrefix.asRight[ProcessorException])
@@ -314,27 +287,19 @@ object S3WriterManager extends LazyLogging {
         case None => ProcessorException("Can't find fileNamingStrategy in config").asLeft
       }
 
-    val processorFn: (TopicPartition, RemoteS3PathLocation) => BlockingQueueProcessor = processorMan.processor
-
     val formatWriterFn: (TopicPartitionOffset, Map[PartitionField, String], Offset => () => Unit) => Either[ProcessorException, S3FormatWriter] = (topicPartitionInitialOffset, partitionValues, updateOffsetFn) =>
       bucketOptsForTopic(config, topicPartitionInitialOffset.topic) match {
         case Some(bucketOptions) =>
-          val stagingFilename = for {
+          for {
             fileNamingStrategy <- fileNamingStrategyFn(topicPartitionInitialOffset.topic)
             stagingFileName <- fileNamingStrategy.stagingFilename(bucketOptions.bucketAndPrefix, topicPartitionInitialOffset.toTopicPartition, partitionValues)
-          } yield stagingFileName
-          stagingFilename match {
-            case Left(ex) => ex.asLeft
-            case Right(stagingFilename) => implicit val processor: BlockingQueueProcessor = processorFn(topicPartitionInitialOffset.toTopicPartition, stagingFilename)
-              // a new tpProcessor is created for each unique location
-              bucketOptions.writeMode.createFormatWriter(
-                bucketOptions.formatSelection,
-                stagingFilename,
-                topicPartitionInitialOffset.offset,
-                updateOffsetFn
-              )
-          }
-
+            formatWriter <- bucketOptions.writeMode.createFormatWriter(
+              bucketOptions.formatSelection,
+              stagingFileName,
+              topicPartitionInitialOffset.offset,
+              updateOffsetFn
+            )
+          } yield formatWriter
         case None => throw new IllegalArgumentException("Can't find commitPolicy in config")
       }
 
