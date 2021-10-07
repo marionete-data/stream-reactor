@@ -54,7 +54,7 @@ class OutputStreamOptionsTest extends AnyFlatSpec with Matchers {
     val result = OutputStreamOptions(adapt(Map(), Option("superSleekSinkName")))
     result.isRight should be(true)
     result.right.get match {
-      case OutputStreamOptions(localLocation) => localLocation.basePath should startWith(s"$tempDir/superSleekSinkName")
+      case OutputStreamOptions(localLocation) => localLocation.basePath should startWith(s"$tempDir/superSleekSinkName".replace("//", "/"))
       case _ => fail("Wrong")
     }
   }
