@@ -30,9 +30,9 @@ ScalaCompileOptions.metaClass.useCompileDaemon = false
 
 
 allprojects {
-    group = 'com.datamountaineer'
+    group = 'com.marionete'
     version = project.version
-    description = "stream-reactor"
+    description = "marionete-stream-reactor"
     apply plugin: 'java'
     apply plugin: 'scala'
     apply plugin: 'maven'
@@ -267,12 +267,12 @@ allprojects {
                     name project.name
                     description project.description
                     packaging 'jar'
-                    url 'https://github.com/landoop/stream-reactor'
+                    url 'https://github.com/marionete-data/stream-reactor'
 
                     scm {
-                        connection 'scm:git:https://github.com/lensesio/stream-reactor.git'
-                        developerConnection 'scm:git:git@github.com:lensesio/stream-reactor.git'
-                        url 'https://github.com/lensesio/stream-reactor.git'
+                        connection 'scm:git:https://github.com/marionete-data/stream-reactor.git'
+                        developerConnection 'scm:git:git@github.com:marionete-data/stream-reactor.git'
+                        url 'https://github.com/marionete-data/stream-reactor.git'
                     }
 
                     licenses {
@@ -285,19 +285,9 @@ allprojects {
 
                     developers {
                         developer {
-                            id = 'andrewstevenson'
-                            name = 'Andrew Stevenson'
-                            email = 'andrew@lenses.io'
-                        }
-                        developer {
-                            id = 'stheppi'
-                            name = 'Stefan Bocutiu'
-                            email = 'stefan@lenses.io'
-                        }
-                        developer {
-                            id = 'antwins'
-                            name = 'Antonios Chalkiopoulos'
-                            email = 'antonios@lenses.io'
+                            id = 'politrons'
+                            name = 'Pablo Picouto Garcia'
+                            email = 'pablo.garcia@marionete.co.uk'
                         }
                     }
                 }

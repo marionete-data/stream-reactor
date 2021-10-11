@@ -14,25 +14,5 @@
  * limitations under the License.
  */
 
-include 'kafka-connect-elastic7',
-        'kafka-connect-elastic6',
-        'kafka-connect-kudu',
-        'kafka-connect-cassandra',
-        'kafka-connect-hbase',
-        'kafka-connect-redis',
-        'kafka-connect-hazelcast',
-        'kafka-connect-hive',
-        'kafka-connect-hive:it',
-        'kafka-connect-hive-1.1',
-        'kafka-connect-hive-1.1:it',
-        'kafka-connect-jms',
-        'kafka-connect-influxdb',
-        'kafka-connect-mongodb',
-        'kafka-connect-mqtt',
-        'kafka-connect-coap',
-        'kafka-connect-ftp',
-        'kafka-connect-azure-documentdb',
-        'kafka-connect-pulsar',
-        'kafka-connect-aws-s3',
-        'kafka-connect-common',
-        'kafka-connect-testcontainers'
+include 'marionete-kafka-connect-ftp',
+        'kafka-connect-common'
